@@ -1,0 +1,179 @@
+#container: "docker://continuumio/miniconda3:25.3.1-1"
+
+import pandas as pd
+from pathlib import Path
+
+# Read in csv for metadata as df
+samplesheet_single = pd.read_csv(Path("~/katiegal_shared/projects/desNb-circuit/cluster/config/samplesheet_single.csv")) 
+# e.g.
+# Plasmidsaurus_run,    filename,                                       condition,                  genome   
+# 251204_Plas,          4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz,    LNI-SDDIR-FACS-14dpi_rep1,     GRCm39
+
+# Add origFileName as new column in dftm
+# e.g. origFileName = data/raw_reads/251204_Plas/4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz
+samplesheet_single['origFileName'] = ('data/raw_reads/' + samplesheet_single.Plasmidsaurus_run + '/' + samplesheet_single.filename)
+# Add in post_pref as new column in df
+# e.g. newFileName = data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1
+samplesheet_single['newFileName'] = ('data/renamed_fastq/' + samplesheet_single.condition)
+
+
+# e.g. origFileName = data/raw_reads/251204_Plas/4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz
+# e.g. newFileName = data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1
+def get_input_raw_reads():
+    # [data/raw_reads/251204_Plas/4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz]
+    return list(samplesheet_single.origFileName)
+def get_output_raw_reads():
+    # [data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1.fastq.gz]
+    return list(samplesheet_single.newFileName + '.fastq.gz')
+
+# Runs everything
+rule all:
+    # e.g. {sample} = LNI-SDDIR-FACS-14dpi_rep1
+    #.     {genome} = GRCm39
+    input:
+        # e.g. newFileName = data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1
+        # expands into 
+        #     data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1.fastq.gz
+        expand("{sample}.fastq.gz",  sample=samplesheet_single['newFileName']),
+        
+        # e.g. newFileName = data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1
+        # expands into 
+        #     data/trimmed_reads/LNI-SDDIR-FACS-14dpi_rep1_trimmed.fq.gz
+        expand("data/trimmed_reads/{sample}_trimmed.fq.gz",  sample=samplesheet_single['condition']),
+
+        # e.g. newFileName = data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1
+        # expands into 
+        #     data/salmon_quantification/LNI-SDDIR-FACS-14dpi_rep1_GRCm39
+        expand("data/salmon_quantification/{sample}_{genome}", sample=samplesheet_single["condition"], genome=samplesheet_single["genome"]),
+        
+        # "data/deseq2/deseq2_results_{genome}_normalized.csv" # "data/deseq2/deseq2_results_GRCm39_normalized.csv"
+
+# symlink from data/raw_reads to data/renamed_fastq
+rule symlink_samples:
+    localrule: True
+    input:
+        get_input_raw_reads()
+    output:
+        get_output_raw_reads()
+    threads: 1
+    resources:
+        mem_mb=1024
+    run:
+        for _i, row in samplesheet_single.iterrows():
+            # e.g. origFileName = data/raw_reads/251204_Plas/4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz
+            # e.g. newFileName = data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1
+            # data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1.fastq.gz symlink to data/raw_reads/251204_Plas/4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz
+            Path(row.newFileName + '.fastq.gz').symlink_to(Path(row.origFileName).resolve())
+
+# Using Trim Galore, apply adapter and quality trimming to FASTQ files
+rule trim_reads:
+    # e.g. {sample} = LNI-SDDIR-FACS-14dpi_rep1
+    #.     {genome} = GRCm39
+    input:
+        "data/renamed_fastq/{sample}.fastq.gz", # mate1="data/renamed_fastq/LNI-SDDIR-FACS-14dpi_rep1.fastq.gz"
+    output:
+        trimmedfq = "data/trimmed_reads/{sample}_trimmed.fq.gz", 
+
+    # ├── LNI-SDDIR-DASIT50-14dpi_rep1        .fastq.gz_trimming_report.txt
+        logfq = "data/logs/trim_reads/{sample}.fastq.gz_trimming_report.txt",
+    # ├── LNI-SDDIR-DASIT50-14dpi_rep1                     _trimmed_fastqc.html
+        fastqc_trimmed = "data/trimmedFASTQCreports/{sample}_trimmed_fastqc.html",
+    # ├── LNI-SDDIR-DASIT50-14dpi_rep1                          _trimmed_fastqc.zip
+        fastqc_zip_trimmed = "data/trimmedFASTQCreports/{sample}_trimmed_fastqc.zip",
+
+    log:
+        "data/logs/trim_reads/{sample}.log"
+    conda:
+        "envs/trim_reads.yaml"
+    threads: 4
+    resources:
+        mem_mb=4096
+    shell:
+        """
+        (trim_galore --cores {threads} --fastqc --output_dir data/trimmed_reads/ {input}) 2>&1 | tee {log}
+        (mv data/trimmed_reads/{wildcards.sample}*trimming_report.txt data/logs/trim_reads/) 2>&1 | tee -a {log}
+        (mv data/trimmed_reads/{wildcards.sample}*fastqc.html data/trimmedFASTQCreports/) 2>&1 | tee -a {log}
+        (mv data/trimmed_reads/{wildcards.sample}*fastqc.zip data/trimmedFASTQCreports/) 2>&1 | tee -a {log}
+        """
+
+# Create salmon index from transcriptome
+# e.g. {genome} = GRCm39
+rule build_salmon_index:
+    input:
+        "data/genomes/{genome}/cdna.fa.gz" # "data/genomes/GRCm39/cdna.fa.gz"
+    output:
+        directory("data/genomes/{genome}/salmon_index") # "data/genomes/GRCm39/salmon_index"
+    log:
+        "data/logs/genome_{genome}/build_salmon_index.log" # data/logs/genome_GRCm39/build_salmon_index.log
+    conda:
+        "envs/salmon.yaml"
+    threads: 40
+    resources:
+        mem_mb=16*1024
+    shell:
+        """
+        salmon index -t {input:q} -i {output:q} -p {threads}
+        """
+
+# Quantify samples using transcriptome 
+# e.g. {sample} = LNI-SDDIR-FACS-14dpi_rep1
+#.     {genome} = GRCm39
+rule salmon_quantification:
+    input:
+        index="data/genomes/{genome}/salmon_index",
+        mate="data/trimmed_reads/{sample}_trimmed.fq.gz",
+    output:
+        directory("data/salmon_quantification/{sample}_{genome}")
+    log:
+        "data/logs/salmon_quantification/{sample}_{genome}.log"
+    conda:
+        "envs/salmon.yaml"
+    threads:10
+    resources:
+        mem_mb=8*1024
+    shell:
+        """
+        salmon quant -i {input.index} -l A \
+            -r {input.mate} \
+            --threads {threads} \
+            -o {output} \
+            --validateMappings --gcBias \
+            2>&1 | tee {log}
+        """    
+
+# # Run DESEQ2
+# # e.g. {sample} = Puro_rep1
+# #.     {genome} = GRCm39
+# rule deseq2_analysis:
+#     input:
+#         quant_dirs = expand("data/salmon_quantification/{sample}_{genome}/quant.sf", sample=samplesheet_single["condition"], genome=samplesheet_single["genome"]),
+#         samplesheet = "config/samplesheet_single.csv",
+#         tx2gene = "data/genomes/{genome}/{genome}_tx2gene.tsv" # "data/genomes/GRCm39/GRCm39_tx2gene.tsv"
+#     output:
+#         "data/deseq2/deseq2_results_{genome}_normalized.csv" # "data/deseq2/deseq2_results_GRCm39_normalized.csv"
+#     log:
+#         "data/logs/deseq2/deseq2_{genome}_analysis.log"
+#     conda:
+#         "envs/deseq2.yaml"
+#     script:
+#         "scripts/run_deseq2.R"
+
+
+################################################
+# TO DO
+# FIGURE OUT GENOME FETCH
+################################################
+# rule fetch_genome_GRCm39:
+#     # No input listed; this is to stop the compute nodes on the cluster from looking for an internet connection.
+#     # This rule must be run on the input node!
+#     output:
+#         "data/genomes/fasta/GRCm39.fna",
+#         "data/genomes/gtf/GRCm39.gtf"
+#     log: "logs/genome_fetch_GRCm39.log"
+#     shell:
+#         """
+#         wget -O data/genomes/fasta/GRCm39.fna.gz ftp://ftp.ensembl.org/pub/release-105/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz 2> {log}
+#         wget -O data/genomes/gtf/GRCm39.gtf.gz ftp://ftp.ensembl.org/pub/release-105/gtf/mus_musculus/Mus_musculus.GRCm39.105.chr.gtf.gz 2>> {log}
+#         gunzip data/genomes/fasta/GRCm39.fna.gz 2>> {log}
+#         gunzip data/genomes/gtf/GRCm39.gtf.gz 2>> {log}
+#         """

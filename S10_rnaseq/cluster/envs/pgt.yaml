@@ -1,0 +1,6 @@
+channels:
+    - conda-forge
+    - bioconda
+    - anaconda
+dependencies:
+    - bioconda::pygenometracks=3.9

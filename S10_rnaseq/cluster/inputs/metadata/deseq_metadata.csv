@@ -1,0 +1,13 @@
+salmon_quant_file,species,cocktail,selection,timepoint,rep,is_paired_reads
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-FACS-14dpi_rep1_GRCm39/quant.sf,mouse,LNI-SDDIR,FACS,14dpi,1,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-FACS-14dpi_rep2_GRCm39/quant.sf,mouse,LNI-SDDIR,FACS,14dpi,2,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-FACS-14dpi_rep3_GRCm39/quant.sf,mouse,LNI-SDDIR,FACS,14dpi,3,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-DASIT50-14dpi_rep1_GRCm39/quant.sf,mouse,LNI-SDDIR,DASIT,14dpi,1,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-DASIT50-14dpi_rep2_GRCm39/quant.sf,mouse,LNI-SDDIR,DASIT,14dpi,2,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-DASIT50-14dpi_rep3_GRCm39/quant.sf,mouse,LNI-SDDIR,DASIT,14dpi,3,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-FACS-21dpi_rep1_GRCm39/quant.sf,mouse,LNI-SDDIR,FACS,21dpi,1,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-FACS-21dpi_rep2_GRCm39/quant.sf,mouse,LNI-SDDIR,FACS,21dpi,2,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-FACS-21dpi_rep3_GRCm39/quant.sf,mouse,LNI-SDDIR,FACS,21dpi,3,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-DASIT50-21dpi_rep1_GRCm39/quant.sf,mouse,LNI-SDDIR,DASIT,21dpi,1,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-DASIT50-21dpi_rep2_GRCm39/quant.sf,mouse,LNI-SDDIR,DASIT,21dpi,2,False
+C:/Users/Grad2024/Nextcloud/data/NGS/processed/2025.12.16_DASIT-iMN-RNAseq/data/salmon_quantification/LNI-SDDIR-DASIT50-21dpi_rep3_GRCm39/quant.sf,mouse,LNI-SDDIR,DASIT,21dpi,3,False

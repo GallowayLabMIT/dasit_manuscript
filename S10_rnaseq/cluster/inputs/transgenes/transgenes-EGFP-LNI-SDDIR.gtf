@@ -1,0 +1,3 @@
+v.pEGFP	unknown	exon	97	816	.	+	.	gene_id "v.pEGFP"; transcript_id "v.pEGFP"; gene_name "v.EGFP"; gene_biotype "protein_coding";
+v.LNI	unknown	exon	1989	5291	.	+	.	gene_id "v.LNI"; transcript_id "v.LNI"; gene_name "v.LNI"; gene_biotype "protein_coding";
+v.SDDIR	unknown	exon	2013	4009	.	+	.	gene_id "v.SDDIR"; transcript_id "v.SDDIR"; gene_name "v.SDDIR"; gene_biotype "protein_coding";

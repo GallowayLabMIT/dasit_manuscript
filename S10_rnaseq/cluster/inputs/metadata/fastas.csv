@@ -1,0 +1,13 @@
+sample_name,unpaired_fastq
+4Y5Y7T_1_LNI-SDDIR-FACS-14dpi_rep1,data/reads/raw/251204_Plas/4Y5Y7T_1_LNI-SDDIR_FACS_14dpi_rep1.fastq.gz
+4Y5Y7T_2_LNI-SDDIR-FACS-14dpi_rep2,data/reads/raw/251204_Plas/4Y5Y7T_2_LNI-SDDIR_FACS_14dpi_rep2.fastq.gz
+4Y5Y7T_3_LNI-SDDIR-FACS-14dpi_rep3,data/reads/raw/251204_Plas/4Y5Y7T_3_LNI-SDDIR_FACS_14dpi_rep3.fastq.gz
+4Y5Y7T_4_LNI-SDDIR-DASIT50-14dpi_rep1,data/reads/raw/251204_Plas/4Y5Y7T_4_LNI-SDDIR_DASIT50_14dpi_rep1.fastq.gz
+4Y5Y7T_5_LNI-SDDIR-DASIT50-14dpi_rep2,data/reads/raw/251204_Plas/4Y5Y7T_5_LNI-SDDIR_DASIT50_14dpi_rep2.fastq.gz
+4Y5Y7T_6_LNI-SDDIR-DASIT50-14dpi_rep3,data/reads/raw/251204_Plas/4Y5Y7T_6_LNI-SDDIR_DASIT50_14dpi_rep3.fastq.gz
+QT5VW9_1_LNI-SDDIR-FACS-21dpi_rep1,data/reads/raw/251211_Plas/QT5VW9_1_LNI-SDDIR_FACS_21dpi_rep1.fastq.gz
+QT5VW9_2_LNI-SDDIR-FACS-21dpi_rep2,data/reads/raw/251211_Plas/QT5VW9_2_LNI-SDDIR_FACS_21dpi_rep2.fastq.gz
+QT5VW9_3_LNI-SDDIR-FACS-21dpi_rep3,data/reads/raw/251211_Plas/QT5VW9_3_LNI-SDDIR_FACS_21dpi_rep3.fastq.gz
+QT5VW9_4_LNI-SDDIR-DASIT50-21dpi_rep1,data/reads/raw/251211_Plas/QT5VW9_4_LNI-SDDIR_DASIT50_21dpi_rep1.fastq.gz
+QT5VW9_5_LNI-SDDIR-DASIT50-21dpi_rep2,data/reads/raw/251211_Plas/QT5VW9_5_LNI-SDDIR_DASIT50_21dpi_rep2.fastq.gz
+QT5VW9_6_LNI-SDDIR-DASIT50-21dpi_rep3,data/reads/raw/251211_Plas/QT5VW9_6_LNI-SDDIR_DASIT50_21dpi_rep3.fastq.gz

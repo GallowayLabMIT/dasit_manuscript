@@ -1,0 +1,12 @@
+channels:
+    - conda-forge
+    - bioconda
+    - nodefaults
+dependencies:
+    - r-base=4.4
+    - bioconductor-deseq2
+    - r-docopt
+    - r-readr
+    - r-pheatmap
+    - bioconda::bioconductor-tximport
+    - r-yaml

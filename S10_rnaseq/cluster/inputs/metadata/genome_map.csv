@@ -1,0 +1,4 @@
+genome_shortname,genome_fullname,download_url
+GRCh38.p14,GCF_000001405.40_GRCh38.p14,https://ftp.ncbi.nih.gov/genomes/refseq/vertebrate_mammalian/Homo_sapiens/all_assembly_versions/GCF_000001405.40_GRCh38.p14/
+GRCm39,GCF_000001635.27_GRCm39,https://ftp.ncbi.nih.gov/genomes/refseq/vertebrate_mammalian/Mus_musculus/all_assembly_versions/GCF_000001635.27_GRCm39/
+ERCC,ERCC92,https://assets.thermofisher.com/TFS-Assets/LSG/manuals/ERCC92.zip

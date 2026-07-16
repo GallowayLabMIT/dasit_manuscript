@@ -1,0 +1,7 @@
+channels:
+    - conda-forge
+    - bioconda
+    - anaconda
+dependencies:
+    - blast=2.16.0
+    - conda-forge::biopython=1.85

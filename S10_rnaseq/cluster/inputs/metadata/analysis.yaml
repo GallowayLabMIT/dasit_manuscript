@@ -1,0 +1,11 @@
+DEGs:
+ - name: "all_conditions"
+   formula: "~rep + condition"
+   contrast:
+    - var: condition
+      ref: "FACS_14dpi"
+      test: "DASIT_14dpi"
+
+    - var: condition
+      ref: "FACS_21dpi"
+      test: "DASIT_21dpi"

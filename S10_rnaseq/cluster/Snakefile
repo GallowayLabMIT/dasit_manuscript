@@ -1,0 +1,994 @@
+import pandas as pd
+from pathlib import Path
+
+pepfile: "inputs/metadata/metadata.yaml"
+pepschema: "http://schema.databio.org/pep/2.1.0.yaml"
+
+import csv
+import itertools
+
+
+
+def input_raw_alignments(wildcards):
+    alignments = []
+    for tup in pep.sample_table.itertuples():
+        genome_name = tup.base_genome
+        alignments.append(f"data/alignments/raw/{tup.Index}__{genome_name}.bam")
+    return alignments
+
+def input_rna_seq_quant(wildcards):
+    quants = []
+    for tup in pep.sample_table.itertuples():
+        genome_name = tup.base_genome
+        quants.append(f"data/salmon_quantification/{tup.Index}__{genome_name}")
+    return quants
+
+rule all:
+    input:
+        "data/deseq/GRCm39/"
+        #"data/reports/multiqc_report.html"
+
+##########################################################
+# QC
+##########################################################
+
+def input_fastqc_reports(wildcards):
+    """Return all expected FASTQC reports"""
+    reports = []
+    for tup in pep.sample_table.itertuples():
+        for flowlane in range(len(tup.paired_fastq_base)):
+            reports.extend([
+                f"data/qc/pretrim_fastqc/{tup.Index}.flowlane{flowlane}/pretrim_{tup.Index}.flowlane{flowlane}.1_fastqc.html",
+                f"data/qc/pretrim_fastqc/{tup.Index}.flowlane{flowlane}/pretrim_{tup.Index}.flowlane{flowlane}.2_fastqc.html",
+                f"data/qc/posttrim_fastqc/{tup.Index}.flowlane{flowlane}/posttrim_{tup.Index}.flowlane{flowlane}.1_fastqc.html",
+                f"data/qc/posttrim_fastqc/{tup.Index}.flowlane{flowlane}/posttrim_{tup.Index}.flowlane{flowlane}.2_fastqc.html",
+            ])
+    return reports
+
+rule multiqc:
+    input:
+        input_fastqc_reports,
+        "data/qc/duplicates/metrics_mqc.tsv",
+        "data/qc/duplicates/full_metrics_mqc.tsv"
+    output:
+        "data/reports/multiqc_report.html"
+    log:
+        "data/logs/multiqc.log"
+    conda:
+        "envs/multiqc.yaml"
+    shell:
+        """
+        rm -f {output:q}
+        multiqc --force -o "data/reports" data/qc/pretrim_fastqc data/qc/posttrim_fastqc data/qc/duplicates >{log:q} 2>&1
+        """
+
+##########################################################
+# helper functions for handling paired vs. unpaired reads
+##########################################################
+def is_paired(wildcards):
+    return pep.sample_table.loc[wildcards.sample,"is_paired_reads"] == "True"
+
+
+
+##########################################################
+# Adapter trimming and initial QC
+##########################################################
+def input_raw_unpaired_fastqs(wildcards):
+    """Locate input FASTQ files for unpaired samples"""
+    return pep.sample_table.loc[wildcards.sample,'unpaired_fastq']
+
+rule trim_unpaired_reads:
+    input:
+        input_raw_unpaired_fastqs
+    output:
+        trimmed='data/reads/trimmed/{sample}.unpaired.fastq.gz'
+    params:
+        outdir=subpath(output.trimmed, parent=True),
+        prefname=subpath(output.trimmed, basename=True, strip_suffix=".unpaired.fastq.gz")
+    conda:
+        'envs/trim-galore.yaml'
+    log:
+        'data/logs/trim_reads/{sample}.log'
+    # Note: from the trim_galore docs, with pgzip installed, cores=4 actually consumes ~15
+    # https://github.com/FelixKrueger/TrimGalore/blob/master/Docs/Trim_Galore_User_Guide.md#full-list-of-options-for-trim-galore
+    threads: 15
+    resources:
+        mem_mb=4096
+    shell:
+        """
+        trim_galore --cores 4 --gzip --no_report_file --basename "{params.prefname}" --output_dir {params.outdir:q}  {input:q} > {log:q} 2>&1
+        mv "data/reads/trimmed/{params.prefname}_trimmed.fq.gz" {output.trimmed:q}
+        """
+
+def input_raw_fastqs(wildcards):
+    """Locate input FASTQ files for a specific flowlane (e.g. entry in the fastq subsample table)"""
+    paired_fastq_base_vals = pep.sample_table.loc[wildcards.sample,"paired_fastq_base"]
+
+    base_val = paired_fastq_base_vals[int(wildcards.flowlane)]
+
+    return {"mate_1": f"{base_val}1_sequence.fastq.gz", "mate_2": f"{base_val}2_sequence.fastq.gz"}
+
+rule trim_reads:
+    input:
+        unpack(input_raw_fastqs)
+    output:
+        mate_1='data/reads/trimmed/{sample}.flowlane{flowlane}.1.fastq.gz',
+        mate_2='data/reads/trimmed/{sample}.flowlane{flowlane}.2.fastq.gz',
+    params:
+        outdir=subpath(output.mate_1, parent=True),
+        prefname=subpath(output.mate_1, basename=True, strip_suffix=".1.fastq.gz")
+    conda:
+        'envs/trim-galore.yaml'
+    log:
+        'data/logs/trim_reads/{sample}.flowlane{flowlane}.log'
+    # Note: from the trim_galore docs, with pgzip installed, cores=4 actually consumes ~15
+    # https://github.com/FelixKrueger/TrimGalore/blob/master/Docs/Trim_Galore_User_Guide.md#full-list-of-options-for-trim-galore
+    threads: 15
+    resources:
+        mem_mb=4096
+    shell:
+        """
+        trim_galore --paired --cores 4 --gzip --no_report_file --basename "{params.prefname}" --output_dir {params.outdir:q}  {input.mate_1:q} {input.mate_2:q} > {log:q} 2>&1
+        mv "data/reads/trimmed/{params.prefname}_val_1.fq.gz" {output.mate_1:q}
+        mv "data/reads/trimmed/{params.prefname}_val_2.fq.gz" {output.mate_2:q}
+        """
+rule untrimmed_fastqc:
+    input:
+        unpack(input_raw_fastqs)
+    output:
+        report_1="data/qc/pretrim_fastqc/{sample}.flowlane{flowlane}/pretrim_{sample}.flowlane{flowlane}.1_fastqc.html",
+        report_1_zip="data/qc/pretrim_fastqc/{sample}.flowlane{flowlane}/pretrim_{sample}.flowlane{flowlane}.1_fastqc.zip",
+        report_2="data/qc/pretrim_fastqc/{sample}.flowlane{flowlane}/pretrim_{sample}.flowlane{flowlane}.2_fastqc.html",
+        report_2_zip="data/qc/pretrim_fastqc/{sample}.flowlane{flowlane}/pretrim_{sample}.flowlane{flowlane}.2_fastqc.zip"
+    params:
+        outdir=subpath(output.report_1, parent=True)
+    log:
+        "data/logs/fastqc/pretrim_{sample}.flowlane{flowlane}.log"
+    conda:
+        "envs/fastqc.yaml"
+    threads: 2
+    resources:
+        non_slurm_mem_mb=2048,
+        mem_mb=(1024 + 512)
+    shell:
+        """
+        fastqc --threads {threads} --memory {resources.non_slurm_mem_mb} --outdir "{params.outdir}" {input.mate_1:q} {input.mate_2:q} >"{log}" 2>&1
+        ls "{params.outdir}" >> {log:q}
+        mv "{params.outdir}/"*_1_sequence_fastqc.html {output.report_1:q}
+        mv "{params.outdir}/"*_1_sequence_fastqc.zip {output.report_1_zip:q}
+        mv "{params.outdir}/"*_2_sequence_fastqc.html {output.report_2:q}
+        mv "{params.outdir}/"*_2_sequence_fastqc.zip {output.report_2_zip:q}
+        """
+
+rule trimmed_fastqc:
+    input:
+        mate_1='data/reads/trimmed/{sample}.flowlane{flowlane}.1.fastq.gz',
+        mate_2='data/reads/trimmed/{sample}.flowlane{flowlane}.2.fastq.gz',
+    output:
+        report_1="data/qc/posttrim_fastqc/{sample}.flowlane{flowlane}/posttrim_{sample}.flowlane{flowlane}.1_fastqc.html",
+        report_1_zip="data/qc/posttrim_fastqc/{sample}.flowlane{flowlane}/posttrim_{sample}.flowlane{flowlane}.1_fastqc.zip",
+        report_2="data/qc/posttrim_fastqc/{sample}.flowlane{flowlane}/posttrim_{sample}.flowlane{flowlane}.2_fastqc.html",
+        report_2_zip="data/qc/posttrim_fastqc/{sample}.flowlane{flowlane}/posttrim_{sample}.flowlane{flowlane}.2_fastqc.zip"
+    params:
+        outdir=subpath(output.report_1, parent=True)
+    log:
+        "data/logs/fastqc/posttrim_{sample}.flowlane{flowlane}.log"
+    conda:
+        "envs/fastqc.yaml"
+    threads: 2
+    resources:
+        non_slurm_mem_mb=2048,
+        mem_mb=(1024 + 512)
+    shell:
+        """
+        fastqc --threads {threads} --memory {resources.non_slurm_mem_mb} --outdir "{params.outdir}" {input.mate_1:q} {input.mate_2:q} >"{log}" 2>&1
+        ls "{params.outdir}" >> {log:q}
+        mv "{params.outdir}/"*1_fastqc.html {output.report_1:q}
+        mv "{params.outdir}/"*1_fastqc.zip {output.report_1_zip:q}
+        mv "{params.outdir}/"*2_fastqc.html {output.report_2:q}
+        mv "{params.outdir}/"*2_fastqc.zip {output.report_2_zip:q}
+        """
+
+##########################################################
+# Alignment, merging, and filtering
+##########################################################
+rule align_unpaired_reads:
+    input:
+        reads='data/reads/trimmed/{sample}.unpaired.fastq.gz',
+        indicies=multiext("data/genomes/{genome}/index", ".1.bt2", ".2.bt2", ".3.bt2", ".4.bt2", ".rev.1.bt2", ".rev.2.bt2")
+    params:
+        index_base = "data/genomes/{genome}"
+    output:
+        "data/alignments/raw/{sample}__{genome}.bam"
+    log:
+        "data/logs/alignment/{sample}__{genome}.log"
+    conda:
+        "envs/bowtie2.yaml"
+    threads: 20
+    resources:
+        mem_mb=80000
+    shell:
+        """
+        HEADER_LINE=$(cat {input.reads:q} | gunzip | head -n 1) ||:
+        PU_FC=$(echo "$HEADER_LINE" | cut -d':' -f3)
+        PU_lane=$(echo "$HEADER_LINE" | cut -d':' -f4)
+        PU_barcode=$(echo "$HEADER_LINE" | cut -d':' -f10)
+        PU="$PU_FC.$PU_lane.$PU_barcode"
+        PL="ILLUMINA"
+        RG="{wildcards.sample}.$PU"
+        bowtie2 \
+            --threads {threads} \
+            -x "{params.index_base}/index" \
+            -U {input.reads:q} \
+            --reorder --local --very-sensitive-local \
+            --rg-id "$RG" --rg "PU:$PU" --rg 'LB:{wildcards.sample}' --rg 'SM:{wildcards.sample}' --rg "PL:$PL" \
+            --met-stderr --met 30 -t \
+            2>'{log}' | sambamba view -S -f bam -o {output:q} /dev/stdin 2>/dev/null
+        """
+
+rule align_reads:
+    input:
+        mate_1='data/reads/trimmed/{sample}.flowlane{flowlane}.1.fastq.gz',
+        mate_2='data/reads/trimmed/{sample}.flowlane{flowlane}.2.fastq.gz',
+        indicies=multiext("data/genomes/{genome}/index", ".1.bt2", ".2.bt2", ".3.bt2", ".4.bt2", ".rev.1.bt2", ".rev.2.bt2")
+    params:
+        index_base = "data/genomes/{genome}"
+    output:
+        "data/alignments/raw/{sample}.flowlane{flowlane}__{genome}.bam"
+    log:
+        "data/logs/alignment/{sample}.flowlane{flowlane}__{genome}.log"
+    conda:
+        "envs/bowtie2.yaml"
+    threads: 20
+    resources:
+        mem_mb=80000
+    shell:
+        """
+        HEADER_LINE=$(cat {input.mate_1:q} | gunzip | head -n 1) ||:
+        PU_FC=$(echo "$HEADER_LINE" | cut -d':' -f3)
+        PU_lane=$(echo "$HEADER_LINE" | cut -d':' -f4)
+        PU_barcode=$(echo "$HEADER_LINE" | cut -d':' -f10)
+        PU="$PU_FC.$PU_lane.$PU_barcode"
+        PL="ILLUMINA"
+        RG="{wildcards.sample}.$PU"
+        bowtie2 \
+            --threads {threads} \
+            -x "{params.index_base}/index" \
+            -1 {input.mate_1:q} -2 {input.mate_2:q} \
+            --reorder --local --very-sensitive-local \
+            --rg-id "$RG" --rg "PU:$PU" --rg 'LB:{wildcards.sample}' --rg 'SM:{wildcards.sample}' --rg "PL:$PL" \
+            --met-stderr --met 30 -t \
+            2>'{log}' | sambamba view -S -f bam -o {output:q} /dev/stdin 2>/dev/null
+        """
+rule sort_bams:
+    input:
+        "data/alignments/raw/{bam}.bam"
+    output:
+        temp("data/alignments/sorted/{bam}.bam")
+    conda:
+        "envs/sambamba.yaml"
+    threads: 4
+    resources:
+        mem_mb=1024*24
+    shell:
+        """
+        sambamba sort --nthreads={threads} --memory-limit=20GiB --out={output:q} {input:q}
+        """
+
+def input_bams(wildcards):
+    """Locate input BAM files for a specific sample to merge"""
+    paired_fastq_base_vals = pep.sample_table.loc[wildcards.sample,"paired_fastq_base"]
+
+    # We load N flowlanes for N the length of this base vals list 
+    return [
+        f"data/alignments/sorted/{wildcards.sample}.flowlane{i}__{wildcards.genome}.bam"
+        for i in range(len(paired_fastq_base_vals))
+    ]
+
+rule merge_bams:
+    input:
+        input_bams
+    output:
+        "data/alignments/merged/{sample}__{genome}.bam"
+    conda:
+        "envs/sambamba.yaml"
+    threads: 4
+    params:
+        n_bams=lambda wildcards, input: len(input)
+    shell:
+        """
+        if [[ "{params.n_bams}" -eq 1 ]]; then
+            cp {input:q} {output:q}
+        else
+            sambamba merge -t {threads} {output:q} {input:q}
+        fi
+        """
+        
+rule mark_duplicates:
+    input:
+        "data/alignments/merged/{sample}__{genome}.bam"
+    output:
+        bam="data/alignments/dedup_marked/{sample}__{genome}.bam",
+        bai="data/alignments/dedup_marked/{sample}__{genome}.bam.bai",
+        sbi="data/alignments/dedup_marked/{sample}__{genome}.bam.sbi",
+        metrics="data/alignments/dedup_marked/{sample}__{genome}.metrics"
+    log:
+        "data/logs/mark_duplicates/{sample}__{genome}.log"
+    conda:
+        "envs/gatk4.yaml"
+    threads: 16
+    resources:
+        mem_mb=1028*60
+    shell:
+        """
+        gatk --java-options "-Xmx52G" MarkDuplicatesSpark \
+            -I {input:q} -O {output.bam:q} -M {output.metrics:q} \
+            --conf 'spark.executor.cores={threads}' >{log:q} 2>&1
+        """
+
+def input_dup_metrics(wildcards):
+    base_genome_dups = []
+    spikein_dups = []
+    for tup in pep.sample_table.itertuples():
+        genome_name = tup.base_genome
+        if "genome_edits" in tup._fields:
+            for edit in tup.genome_edits:
+                genome_name = f"edited_{genome_name}_with_{edit}"
+        base_genome_dups.append(f"data/alignments/dedup_marked/{tup.Index}__{genome_name}.metrics")
+        if len(tup.spikein_genome) > 0:
+            spikein_dups.append(f"data/alignments/dedup_marked/{tup.Index}__{tup.spikein_genome[0]}.metrics")
+    return {'base_genome': base_genome_dups, 'spikein': spikein_dups}
+
+rule collate_duplicate_metrics:
+    input:
+        unpack(input_dup_metrics)
+    output:
+        summary="data/qc/duplicates/metrics_mqc.tsv",
+        metrics="data/qc/duplicates/full_metrics_mqc.tsv"
+    log:
+        "data/logs/collate_duplicates/collation.log"
+    shell:
+        """
+        scripts/collate_duplicate_metrics.py --main-genome {input.base_genome:q} --spikein-genome {input.spikein:q} --general-stats-output {output.summary:q} --output {output.metrics:q} --log {log:q}
+        """
+
+rule select_suspicious_reads:
+    input:
+        "data/alignments/merged/{bam}.bam"
+    output:
+        "data/alignments/suspicious/{bam}.bam"
+    conda:
+        "envs/sambamba.yaml"
+    threads: 4
+    shell:
+        r"""
+        sambamba slice {input:q} "NC_000013.11:99812977-99838561" | \
+        sambamba view \
+            --format=bam \
+            --filter="paired and not (unmapped or mate_is_unmapped or duplicate) and ((reverse_strand and mate_is_reverse_strand) or ((not reverse_strand) and (not mate_is_reverse_strand)))" \
+            -o {output:q} \
+            --nthreads {threads} /dev/stdin
+        """
+
+rule make_suspicious_bigwigs:
+    input:
+        bam="data/alignments/suspicious/{sample}__{genome}.bam",
+        index="data/alignments/suspicious/{sample}__{genome}.bam.bai"
+    output:
+        "data/tracks/suspicious/{sample}__{genome}.bw"
+    log:
+        "data/logs/suspicious_bigwig/{sample}__{genome}.log"
+    conda:
+        "envs/deeptools.yaml"
+    shell:
+        """
+        bamCoverage --bam {input.bam:q} --outFileFormat bigwig --outFileName {output:q} -v >{log:q} 2>&1
+        """
+
+rule plot_suspicious_roi_bigwigs:
+    input:
+        dox_minus="data/tracks/suspicious/{sample}_-dox__{genome}.bw",
+        dox_plus="data/tracks/suspicious/{sample}_+dox__{genome}.bw",
+        config="inputs/tracks/{config}.ini",
+        roi="inputs/roi/{roi}.txt",
+        genome_annots="data/genomes/{genome}/genomic_deduped_for_plotting.gff",
+        bed="inputs/edit_beds/{genome}.bed"
+    output:
+        plot="data/plots/{sample}__{genome}/suspicious__{config}__{roi}.pdf",
+        config_linked=temp("data/plots/links/suspicious__{sample}__{genome}__{config}_{roi}/tracks.ini"),
+        annots_linked=temp("data/plots/links/suspicious__{sample}__{genome}__{config}_{roi}/genes.gff"),
+        dox_minus_linked=temp("data/plots/links/suspicious__{sample}__{genome}__{config}_{roi}/seq_uninduced.bw"),
+        dox_plus_linked=temp("data/plots/links/suspicious__{sample}__{genome}__{config}_{roi}/seq_induced.bw"),
+        bed=temp("data/plots/links/suspicious__{sample}__{genome}__{config}_{roi}/edits.bed")
+    params:
+       linkdir=subpath(output.config_linked, parent=True) 
+    log:
+        "data/logs/plot_tracks/{sample}__{genome}/suspicious__{config}_{roi}.log"
+    conda:
+        "envs/pgt.yaml"
+    shell:
+        """
+        ln -sf ../../../../{input.config:q} {output.config_linked:q}
+        ln -sf ../../../../{input.genome_annots:q} {output.annots_linked:q}
+        ln -sf ../../../../{input.bed:q} {output.bed:q}
+        ln -sf ../../../../{input.dox_minus:q} {output.dox_minus_linked:q}
+        ln -sf ../../../../{input.dox_plus:q} {output.dox_plus_linked:q}
+        ROI=$(cat {input.roi:q})
+        cd {params.linkdir}
+        pyGenomeTracks --tracks tracks.ini -t "{wildcards.sample}-{wildcards.roi}" --region "$ROI" -o ../../../../{output.plot:q} >../../../../{log:q} 2>&1
+        """
+
+
+rule filter_bams:
+    # samtools -b -q 2 -f 2 -F 1804
+    input:
+        "data/alignments/merged/{bam}.bam"
+    output:
+        "data/alignments/filtered/{bam}.bam"
+    conda:
+        "envs/sambamba.yaml"
+    threads: 4
+    shell:
+        """
+        sambamba view \
+            --format=bam \
+            --filter="mapping_quality >= 3 and proper_pair and (not (unmapped or mate_is_unmapped or duplicate))" \
+            -o {output:q} {input:q} \
+            --nthreads {threads}
+        """
+
+rule index_bam:
+    # Index any bam in any alignments folder, as needed
+    input:
+        "data/alignments/{subfolder}/{bam}.bam"
+    output:
+        "data/alignments/{subfolder}/{bam}.bam.bai"
+    log:
+        "data/logs/index_bam/{subfolder}/{bam}.log"
+    conda:
+        "envs/sambamba.yaml"
+    threads: 4
+    shell:
+        """
+        sambamba index --nthreads={threads} {input:q} {output:q} >{log:q} 2>&1
+        """
+
+##########################################################
+# Genome coverage calculations
+##########################################################
+#rule bam_coverage:
+#    input:
+#        "data/alignments/filtered/{bam}.bam"
+#    output:
+#        plot="data/statistics/coverage/{sample}.pdf",
+#        coverage="data/statistics/coverage/{sample}.tab"
+#    conda:
+#        "envs/deeptools.yaml"
+#    threads: 4
+#    shell:
+#        """
+#        plotCoverage -b {input:q} --outCoverageMetrics {output.coverage:q} -ct 0 -ct 1 -ct 2 -ct 5 -ct 10 -o {output.plot:q}
+#        """
+#
+#rule roi_bam_coverage:
+#    input:
+#        bam="data/alignments/filtered/{bam}.bam",
+#        roi="inputs/roi/{roi}.txt"
+#    output:
+#        plot="data/statistics/coverage/{sample}_roi.pdf",
+#        coverage="data/statistics/coverage/{sample}_roi.tab"
+#    conda:
+#        "envs/deeptools.yaml"
+#    threads: 4
+#    shell:
+#        """
+#        plotCoverage -b {input.bam:q} --region "$(cat {input.roi:q})" --outCoverageMetrics {output.coverage:q} -ct 0 -ct 1 -ct 2 -ct 5 -ct 10 -o {output.plot:q}
+#        """
+
+##########################################################
+# Spike-in normalization
+##########################################################
+
+def input_spikein_bam(wildcards):
+    """Locate filtered spike-in BAM file for a sample"""
+    spikein_genome = pep.sample_table.loc[wildcards.sample,"spikein_genome"][0]
+    return f"data/alignments/filtered/{wildcards.sample}__{spikein_genome}.bam"
+
+# https://github.com/deeptools/deepTools/issues/1073
+rule compute_spike_in_scaling_factors:
+    input:
+        input_spikein_bam
+    output:
+        "data/statistics/spike-in-correction/{sample}.txt"
+    log:
+        "data/logs/spikein_scaling/{sample}.log"
+    conda:
+        "envs/sambamba.yaml"
+    shell:
+        """
+        COUNTS=$(sambamba view -c {input:q})
+        echo "10000 / $COUNTS" | bc -l > {output:q}
+        """
+
+rule make_normalized_bigwig:
+    input:
+        correction="data/statistics/spike-in-correction/{sample}.txt",
+        bam="data/alignments/filtered/{sample}__{genome}.bam",
+        index="data/alignments/filtered/{sample}__{genome}.bam.bai"
+    output:
+        "data/tracks/normalized/{sample}__{genome}.bw"
+    log:
+        "data/logs/normalized_bigwig/{sample}__{genome}.log"
+    conda:
+        "envs/deeptools.yaml"
+    shell:
+        """
+        CORRECTION=$(cat {input.correction:q})
+        bamCoverage --scaleFactor "$CORRECTION" --bam {input.bam:q} --outFileFormat bigwig --outFileName {output:q} -v >{log:q} 2>&1
+        """
+
+##########################################################
+# Salmon quantification
+##########################################################
+rule download_transcriptome:
+    input:
+        genome_map="inputs/metadata/genome_map.csv",
+        checksums="data/genomes/{assembly}/md5checksums.txt"
+    conda:
+        "envs/aria2.yaml"
+    resources:
+        runtime=60
+    output:
+        transcriptome="data/genomes/{assembly}/transcriptome.fna",
+    wildcard_constraints:
+        assembly="(?!edited_|ERCC).+"
+    params:
+        assembly_url=lambda wc, input:  query_csv(input.genome_map, "download_url", qcol="genome_shortname", qval=wc.assembly),
+        assembly_name=lambda wc, input: query_csv(input.genome_map, "genome_fullname", qcol="genome_shortname", qval=wc.assembly)
+    log:
+        "data/logs/genomes/{assembly}/transcriptome_download.log"
+    shell: 
+        r"""
+        aria2c -q "{params.assembly_url}/{params.assembly_name}_rna.fna.gz"  --log-level=info -l "{log}" -o "{output.transcriptome}.gz"
+        echo "Computing checksums" >> "{log}"
+        logpath=$(realpath "{log}")
+        cd data/genomes/{wildcards.assembly}
+        grep -E '{params.assembly_name}_(rna\.fna\.gz)' md5checksums.txt | sed 's/{params.assembly_name}_rna/transcriptome/g' | md5sum -c - >>"$logpath" 2>&1
+        gunzip transcriptome.fna.gz
+        """
+
+rule compute_decoys:
+    localrule: True
+    input:
+        genome="data/genomes/{assembly}/genomic.fna"
+    output:
+        decoys="data/genomes/{assembly}/rna_seq_decoys.txt"
+    shell:
+        r"""
+        grep "^>" {input.genome:q} | cut -d " " -f 1 | sed -e 's/>//g' > {output.decoys:q}
+        """
+
+rule make_transcriptome_with_decoys:
+    localrule: True
+    input:
+        transcriptome="data/genomes/{assembly}/transcriptome.fna",
+        genome="data/genomes/{assembly}/genomic.fna"
+    output:
+        decoy_transcriptome="data/genomes/{assembly}/transcriptome_with_decoys.fa.gz"
+    shell:
+        r"""
+        cat {input.transcriptome:q} {input.genome:q} | gzip -2 > {output.decoy_transcriptome:q}
+        """
+
+rule build_salmon_index:
+    input:
+        transcriptome="data/genomes/{genome}/transcriptome_with_decoys.fa.gz",
+        decoys="data/genomes/{genome}/rna_seq_decoys.txt"
+    output:
+        directory("data/genomes/{genome}/salmon_index")
+    log:
+        "data/logs/genome_{genome}/build_salmon_index.log"
+    conda:
+        "envs/salmon.yaml"
+    threads: 40
+    resources:
+        mem_mb=64*1024
+    shell:
+        """
+        salmon index -t {input.transcriptome:q} -i {output:q} --decoys {input.decoys:q} -k 31 -p {threads} > {log:q} 2>&1
+        """
+
+def input_fastqs_salmon(wildcards):
+    """Locate input FASTQ files to merge for salmon"""
+    if is_paired(wildcards):
+        
+        paired_fastq_base_vals = pep.sample_table.loc[wildcards.sample,"paired_fastq_base"]
+
+        # We load N flowlanes for N the length of this base vals list 
+        return {
+            'mate_1': [
+                f"data/reads/trimmed/{wildcards.sample}.flowlane{i}.1.fastq.gz"
+                for i in range(len(paired_fastq_base_vals))
+            ],
+            'mate_2': [
+                f"data/reads/trimmed/{wildcards.sample}.flowlane{i}.2.fastq.gz"
+                for i in range(len(paired_fastq_base_vals))
+            ],
+        }
+    else: 
+        return {
+            'reads': f"data/reads/trimmed/{wildcards.sample}.unpaired.fastq.gz"
+        }
+
+rule salmon_quantification:
+    input:
+        unpack(input_fastqs_salmon),
+        index="data/genomes/{genome}/salmon_index"
+    output:
+        quant="data/salmon_quantification/{sample}__{genome}/quant.sf"
+    params:
+        output_dir=subpath(output.quant, parent=True)
+    log:
+        "data/logs/salmon_quantification/{sample}__{genome}.log"
+    conda:
+        "envs/salmon.yaml"
+    threads:10
+    resources:
+        mem_mb=24*1024
+    run:
+        if is_paired(wildcards):
+            shell(
+                """
+                salmon quant -i {input.index} -l A \
+                    -1 {input.mate_1:q} -2 {input.mate_2:q} \
+                    --threads {threads} \
+                    -o {params.output_dir} \
+                    --validateMappings --gcBias \
+                    > {log:q} 2>&1
+                """
+            )
+        else:
+            shell(
+                """
+                salmon quant -i {input.index} -l A \
+                    -r {input.reads:q} \
+                    --threads {threads} \
+                    -o {params.output_dir} \
+                    --validateMappings --gcBias \
+                    > {log:q} 2>&1
+                """
+            )
+##########################################################
+# Deseq analysis
+##########################################################
+
+rule generate_tx2gene:
+    input: 
+        annotations="data/genomes/{genome}/genomic.gtf"
+    output:
+        tx2gene="data/genomes/{genome}/tx2gene.tsv",
+        gene_name_map="data/genomes/{genome}/gene_name_map.tsv"
+    log:
+        "data/logs/genomes/{genome}/generate_tx2gene.log"
+    shell:
+        "scripts/generate_tx2gene.py --annotations {input.annotations:q} --tx2gene {output.tx2gene:q} --gene-name-map {output.gene_name_map:q} >{log:q} 2>&1"
+
+def input_salmon_quant_file(wildcards):
+    samples = pep.sample_table
+    samples = samples[samples.base_genome == wildcards.genome]
+    quants = []
+    for tup in samples.itertuples():
+        genome_name = tup.base_genome
+        quants.append(f"data/salmon_quantification/{tup.Index}__{genome_name}/quant.sf")
+    return quants
+
+def make_deseq_metadata_csv(csv_file_name, wildcards):
+    samples = pep.sample_table
+    samples = samples[samples.base_genome == wildcards.genome]
+    with open(csv_file_name, 'w') as f:
+        writer = csv.DictWriter(f, fieldnames=["salmon_quant_file", "sample_name"]+samples.columns.tolist())
+        writer.writeheader()
+        for tup in samples.itertuples():
+            genome_name = tup.base_genome
+            salmon_quant_file = f"data/salmon_quantification/{tup.Index}__{genome_name}/quant.sf"
+            sample_dict = tup._asdict()
+            sample_dict["sample_name"] = sample_dict["Index"]
+            del sample_dict["Index"]
+            sample_dict["salmon_quant_file"] = salmon_quant_file
+            writer.writerow(sample_dict)
+
+rule deseq_analysis:
+    input:
+        tx2gene="data/genomes/{genome}/tx2gene.tsv",
+        samples=input_salmon_quant_file,
+        analysis_yaml="inputs/metadata/analysis.yaml"
+    output:
+        output_dir=directory("data/deseq/{genome}/"),
+        metadata="data/deseq/{genome}/deseq2_metadata.csv"
+    log:
+        "data/logs/deseq/{genome}/deseq_analysis.log"
+    conda:
+        "envs/deseq2.yaml"
+    threads: 4
+    resources:
+        mem_mb=1024*24  
+    run:
+        make_deseq_metadata_csv(output.metadata, wildcards)
+
+        shell(
+        """
+        scripts/deseq.R --tx2gene {input.tx2gene:q} --sample-metadata {output.metadata:q} --analysis-yaml {input.analysis_yaml:q} --output-dir {output.output_dir:q} >{log:q} 2>&1
+        """)
+        
+
+##########################################################
+# ROI plotting
+##########################################################
+rule dedup_gff:
+    input:
+        "data/genomes/{genome}/genomic.gff"
+    output:
+        "data/genomes/{genome}/genomic_deduped_for_plotting.gff"
+    log:
+        "data/logs/dedup_gff/{genome}.log"
+    shell:
+        """
+        scripts/dedup_gff.py --input {input:q} --output {output:q} --log {log:q}
+        """
+
+rule plot_roi_bigwigs:
+    input:
+        dox_minus="data/tracks/normalized/{sample}_-dox__{genome}.bw",
+        dox_plus="data/tracks/normalized/{sample}_+dox__{genome}.bw",
+        config="inputs/tracks/{config}.ini",
+        roi="inputs/roi/{roi}.txt",
+        genome_annots="data/genomes/{genome}/genomic_deduped_for_plotting.gff",
+        bed="inputs/edit_beds/{genome}.bed"
+    output:
+        plot="data/plots/{sample}__{genome}/{config}__{roi}.pdf",
+        config_linked=temp("data/plots/links/{sample}__{genome}__{config}_{roi}/tracks.ini"),
+        annots_linked=temp("data/plots/links/{sample}__{genome}__{config}_{roi}/genes.gff"),
+        dox_minus_linked=temp("data/plots/links/{sample}__{genome}__{config}_{roi}/seq_uninduced.bw"),
+        dox_plus_linked=temp("data/plots/links/{sample}__{genome}__{config}_{roi}/seq_induced.bw"),
+        bed=temp("data/plots/links/{sample}__{genome}__{config}_{roi}/edits.bed")
+    params:
+       linkdir=subpath(output.config_linked, parent=True) 
+    log:
+        "data/logs/plot_tracks/{sample}__{genome}/{config}_{roi}.log"
+    conda:
+        "envs/pgt.yaml"
+    shell:
+        """
+        ln -sf ../../../../{input.config:q} {output.config_linked:q}
+        ln -sf ../../../../{input.genome_annots:q} {output.annots_linked:q}
+        ln -sf ../../../../{input.bed:q} {output.bed:q}
+        ln -sf ../../../../{input.dox_minus:q} {output.dox_minus_linked:q}
+        ln -sf ../../../../{input.dox_plus:q} {output.dox_plus_linked:q}
+        ROI=$(cat {input.roi:q})
+        cd {params.linkdir}
+        pyGenomeTracks --tracks tracks.ini -t "{wildcards.sample}-{wildcards.roi}" --region "$ROI" -o ../../../../{output.plot:q} >../../../../{log:q} 2>&1
+        """
+
+##########################################################
+# Genome download and modification
+##########################################################
+
+def query_csv(filename, out_col, *, qcol, qval):
+    """Queries a CSV file, returning the (unique) query value / out column value"""
+    # This could be done with a loop, but we'll use Pandas for easy sanity checks
+    df = pd.read_csv(filename)
+    df = df[df[qcol] == qval]
+    if len(df) == 0:
+        raise RuntimeError(f"Queried csv {filename} (query: {qcol}=='{qval}') has no results")
+    if len(df) > 1:
+        raise RuntimeError(f"Queried csv {filename} (query: {qcol}=='{qval}') has multiple results")
+    return df[out_col].iloc[0]
+
+rule copy_spikein_genomes:
+    input:
+        genome="inputs/spikein_genomes/{genome}.fna"
+    output:
+        genome="data/genomes/{genome}/genomic.fna"
+    shell:
+        r"""
+        cp {input.genome:q} {output.genome:q}
+        """
+
+rule download_ncbi_genomes:
+    input:
+        genome_map="inputs/metadata/genome_map.csv"
+    conda:
+        "envs/aria2.yaml"
+    resources:
+        runtime=60
+    output:
+        genome="data/genomes/{assembly}/genomic.fna",
+        gff_annotations="data/genomes/{assembly}/genomic.gff",
+        gtf_annotations="data/genomes/{assembly}/genomic.gtf",
+        assembly_report="data/genomes/{assembly}/assembly_report.txt",
+        checksums="data/genomes/{assembly}/md5checksums.txt"
+    wildcard_constraints:
+        assembly="(?!edited_|ERCC).+"
+    params:
+        assembly_url=lambda wc, input:  query_csv(input.genome_map, "download_url", qcol="genome_shortname", qval=wc.assembly),
+        assembly_name=lambda wc, input: query_csv(input.genome_map, "genome_fullname", qcol="genome_shortname", qval=wc.assembly)
+    log:
+        "data/logs/genomes/{assembly}/genome_download.log"
+    shell: 
+        r"""
+        aria2c -q "{params.assembly_url}/{params.assembly_name}_genomic.fna.gz"  --log-level=info -l "{log}" -o "{output.genome}.gz"
+        aria2c -q "{params.assembly_url}/{params.assembly_name}_genomic.gff.gz"  --log-level=info -l "{log}" -o "{output.gff_annotations}.gz"
+        aria2c -q "{params.assembly_url}/{params.assembly_name}_genomic.gtf.gz"  --log-level=info -l "{log}" -o "{output.gtf_annotations}.gz"
+        aria2c -q "{params.assembly_url}/{params.assembly_name}_assembly_report.txt"  --log-level=info -l "{log}" -o "{output.assembly_report}"
+        aria2c -q "{params.assembly_url}/md5checksums.txt"  -l "{log}" -o "{output.checksums}"
+        echo "Computing checksums" >> "{log}"
+        logpath=$(realpath "{log}")
+        cd data/genomes/{wildcards.assembly}
+        grep -E '{params.assembly_name}_(assembly_report\.txt|genomic\.fna\.gz|genomic\.gtf\.gz|genomic\.gff\.gz)' md5checksums.txt | sed 's/{params.assembly_name}_//g' | md5sum -c - >>"$logpath" 2>&1
+        gunzip *.gz
+        """
+
+        
+
+rule generate_ncbi_chrom_sizes:
+    localrule: True
+    input:
+        "data/genomes/{genome}/assembly_report.txt"
+    output:
+        "data/genomes/{genome}/chrom.sizes"
+    resources:
+        runtime=5
+    shell:
+        """
+        sed '/#/d' "{input}" | grep '.*assembled-molecule.*Chromosome' | awk -F"\t" -v OFS="\t" '{{print $7, $9}}' > "{output}"
+        """
+
+rule generate_chrom_name_mapping:
+    localrule: True
+    input:
+        "data/genomes/{genome}/assembly_report.txt"
+    output:
+        to_ucsc="data/genomes/{genome}/map_to_ucsc.tsv",
+        from_ucsc="data/genomes/{genome}/map_from_ucsc.tsv"
+    resources:
+        runtime=5
+    shell:
+        """
+        sed '/#/d' "{input}" | grep '.*assembled-molecule.*Chromosome' | awk -F"\t" -v OFS="\t" -v RS="\r\n" -v ORS="\n" '{{print $7, $10}}' > "{output.to_ucsc}"
+        sed '/#/d' "{input}" | grep '.*assembled-molecule.*Chromosome' | awk -F"\t" -v OFS="\t" -v RS="\r\n" -v ORS="\n" '{{print $10, $7}}' > "{output.from_ucsc}"
+        """
+
+rule locate_edit_site:
+    input:
+        mod="inputs/genome_modifications/{modification}.gb",
+        blastdb="data/genomes/{genome}/blastdb"
+    output:
+        "data/genome_edits/{modification}_on_{genome}.json"
+    conda:
+        "envs/genome_editing.yaml"
+    log:
+        "data/logs/genome_edits/locate_{modification}_on_{genome}.log"
+    resources:
+        runtime=60
+    shell:
+        """
+        scripts/locate_edits.py --blast-db "{input.blastdb}/blast.db" --edit-gb "{input.mod}" --output "{output}" --log "{log}"
+        """
+
+rule extract_genome_insertion:
+    input:
+        mod="inputs/genome_modifications/{modification}.gb",
+        insert_loc="data/genome_edits/{modification}_on_{genome}.json"
+    output:
+        "data/genome_edits/{modification}_on_{genome}.gff"
+    log:
+        "data/logs/genome_edits/extract_{modification}_on_{genome}.log"
+    conda:
+        "envs/genome_editing.yaml"
+    resources:
+        runtime=5
+    shell:
+        """
+        scripts/extract_genome_insertion.py --edit-json "{input.insert_loc}" --edit-gb "{input.mod}" --gff "{output}" --log "{log}"
+        """
+
+rule edit_genome:
+    input:
+        insert_loc="data/genome_edits/{modification}_on_{genome}.json",
+        insertion="data/genome_edits/{modification}_on_{genome}.gff",
+        genome_fasta="data/genomes/{genome}/genomic.fna",
+        genome_size="data/genomes/{genome}/chrom.sizes",
+        genome_to_map="data/genomes/{genome}/map_to_ucsc.tsv",
+        genome_from_map="data/genomes/{genome}/map_from_ucsc.tsv"
+    output:
+        "data/genomes/edited_{genome}_with_{modification}/genomic.fna",
+        "data/genomes/edited_{genome}_with_{modification}/chrom.sizes",
+        "data/genomes/edited_{genome}_with_{modification}/map_to_ucsc.tsv",
+        "data/genomes/edited_{genome}_with_{modification}/map_from_ucsc.tsv"
+    log:
+        "data/logs/genome_edits/edit_{modification}_on_{genome}.log"
+    params:
+        in_gdir="data/genomes/{genome}",
+        out_gdir="data/genomes/edited_{genome}_with_{modification}"
+    resources:
+        runtime=30
+    conda:
+        "envs/genome_editing.yaml"
+    shell:
+        """
+        scripts/edit_genome.py --edit-json "{input.insert_loc}" --edit-gff "{input.insertion}" \
+        --input-genome "{params.in_gdir}" --output-genome "{params.out_gdir}" \
+        --log "{log}"
+        """
+
+rule update_gff:
+    input:
+        insert_loc="data/genome_edits/{modification}_on_{genome}.json",
+        insertion="data/genome_edits/{modification}_on_{genome}.gff",
+        genome_gff="data/genomes/{genome}/genomic.gff"
+    output:
+        "data/genomes/edited_{genome}_with_{modification}/genomic.gff"
+    log:
+        "data/logs/genome_edits/write_gff_{modification}_on_{genome}.log"
+    resources:
+        runtime=15
+    conda:
+        "envs/genome_editing.yaml"
+    shell:
+        """
+        scripts/edit_genome_annotations.py --edit-json "{input.insert_loc}" --edit-gff "{input.insertion}" \
+        --input "{input.genome_gff}" --output "{output}" --log "{log}"
+        """
+
+rule make_blast_db:
+    input:
+        "data/genomes/{genome}/genomic.fna"
+    output:
+        directory("data/genomes/{genome}/blastdb/")
+    log:
+        "data/logs/genomes/{genome}/makeblastdb.log"
+    threads: 10
+    conda:
+        "envs/genome_editing.yaml"
+    resources:
+        runtime=240
+    shell:
+        """
+        makeblastdb -in "{input}" -input_type fasta -dbtype nucl -out "{output}/blast.db" -logfile "{log}"
+        """
+
+rule build_index:
+    input:
+        "data/genomes/{genome}/genomic.fna"
+    output:
+        multiext("data/genomes/{genome}/index", '.1.bt2', '.2.bt2', '.3.bt2', '.4.bt2', '.rev.1.bt2', '.rev.2.bt2')
+    log:
+        "data/logs/genome_{genome}/build_index.log"
+    conda:
+        "envs/bowtie2.yaml"
+    threads: 40
+    resources:
+        mem_mb=20560,
+        runtime=240
+    shell:
+        """
+        bowtie2-build --threads {threads} -f {input:q} "data/genomes/{wildcards.genome}/index" >"{log}" 2>&1
+        """
+
+rule fastqc:
+    input:
+        "data/reads/relinked/{sample}_1.fastq",
+        "data/reads/relinked/{sample}_2.fastq"
+    output:
+        "data/summary/{sample}_fastqc/{sample}_1_fastqc.html",
+        "data/summary/{sample}_fastqc/{sample}_2_fastqc.html"
+    log:
+        "data/logs/fastqc/{sample}.log"
+    threads: 4
+    resources:
+        non_slurm_mem_mb=10000, #10k is the max
+        mem_mb=11000
+    shell:
+        """
+        fastqc --threads {threads} --memory {resources.non_slurm_mem_mb} --outdir "data/summary/{wildcards.sample}_fastqc" {input:q} >"{log}" 2>&1
+        """

@@ -1,0 +1,13 @@
+sample_name,species,cocktail,selection,timepoint,rep,is_paired_reads,condition
+4Y5Y7T_1_LNI-SDDIR-FACS-14dpi_rep1,mouse,LNI-SDDIR,FACS,14dpi,1,False,derived
+4Y5Y7T_2_LNI-SDDIR-FACS-14dpi_rep2,mouse,LNI-SDDIR,FACS,14dpi,2,False,derived
+4Y5Y7T_3_LNI-SDDIR-FACS-14dpi_rep3,mouse,LNI-SDDIR,FACS,14dpi,3,False,derived
+4Y5Y7T_4_LNI-SDDIR-DASIT50-14dpi_rep1,mouse,LNI-SDDIR,DASIT,14dpi,1,False,derived
+4Y5Y7T_5_LNI-SDDIR-DASIT50-14dpi_rep2,mouse,LNI-SDDIR,DASIT,14dpi,2,False,derived
+4Y5Y7T_6_LNI-SDDIR-DASIT50-14dpi_rep3,mouse,LNI-SDDIR,DASIT,14dpi,3,False,derived
+QT5VW9_1_LNI-SDDIR-FACS-21dpi_rep1,mouse,LNI-SDDIR,FACS,21dpi,1,False,derived
+QT5VW9_2_LNI-SDDIR-FACS-21dpi_rep2,mouse,LNI-SDDIR,FACS,21dpi,2,False,derived
+QT5VW9_3_LNI-SDDIR-FACS-21dpi_rep3,mouse,LNI-SDDIR,FACS,21dpi,3,False,derived
+QT5VW9_4_LNI-SDDIR-DASIT50-21dpi_rep1,mouse,LNI-SDDIR,DASIT,21dpi,1,False,derived
+QT5VW9_5_LNI-SDDIR-DASIT50-21dpi_rep2,mouse,LNI-SDDIR,DASIT,21dpi,2,False,derived
+QT5VW9_6_LNI-SDDIR-DASIT50-21dpi_rep3,mouse,LNI-SDDIR,DASIT,21dpi,3,False,derived

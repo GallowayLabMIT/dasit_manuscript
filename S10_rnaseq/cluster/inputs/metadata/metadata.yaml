@@ -1,0 +1,15 @@
+pep_version: 2.1.0
+sample_table: "samples.csv"
+subsample_table: ["fastas.csv"]
+# go to projects/desNb-circuits/cluster/data
+
+sample_modifiers:
+    derive:
+      attributes: [condition]
+      sources:
+        derived: "{selection}_{timepoint}"
+    imply:
+        - if:
+            species: ["mouse"]
+          then:
+            base_genome: "GRCm39"
